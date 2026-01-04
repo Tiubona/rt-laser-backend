@@ -1,0 +1,191 @@
+[
+  {
+    "type": "ACCESS",
+    "route": "/admin/config",
+    "method": "GET",
+    "userEmail": "admin@rtlaser.com",
+    "timestamp": "2025-11-16T17:55:45.888Z",
+    "details": "Leitura da configuração do robô",
+    "id": "1763315745888-664154"
+  },
+  {
+    "type": "ACCESS",
+    "route": "/admin/config",
+    "method": "GET",
+    "userEmail": "admin@rtlaser.com",
+    "timestamp": "2025-11-16T17:55:45.891Z",
+    "details": "Leitura da configuração do robô",
+    "id": "1763315745891-720702"
+  },
+  {
+    "type": "ACCESS",
+    "route": "/admin/intents",
+    "method": "GET",
+    "userEmail": "admin@rtlaser.com",
+    "timestamp": "2025-11-16T18:10:30.965Z",
+    "details": "Listagem de intents",
+    "id": "1763316630965-883098"
+  },
+  {
+    "type": "ACCESS",
+    "route": "/admin/intents",
+    "method": "GET",
+    "userEmail": "admin@rtlaser.com",
+    "timestamp": "2025-11-16T18:17:36.374Z",
+    "details": "Listagem de intents",
+    "id": "1763317056374-812916"
+  },
+  {
+    "type": "ACCESS",
+    "route": "/admin/intents",
+    "method": "GET",
+    "userEmail": "admin@rtlaser.com",
+    "timestamp": "2025-11-16T18:17:36.381Z",
+    "details": "Listagem de intents",
+    "id": "1763317056381-708971"
+  },
+  {
+    "type": "ACCESS",
+    "route": "/admin/intents",
+    "method": "GET",
+    "userEmail": "admin@rtlaser.com",
+    "timestamp": "2025-11-16T18:17:40.788Z",
+    "details": "Listagem de intents",
+    "id": "1763317060788-357623"
+  },
+  {
+    "type": "ACCESS",
+    "route": "/admin/intents",
+    "method": "GET",
+    "userEmail": "admin@rtlaser.com",
+    "timestamp": "2025-11-16T18:17:44.078Z",
+    "details": "Listagem de intents",
+    "id": "1763317064078-12608"
+  },
+  {
+    "type": "ACCESS",
+    "route": "/admin/config",
+    "method": "GET",
+    "userEmail": "admin@rtlaser.com",
+    "timestamp": "2025-11-16T18:17:45.768Z",
+    "details": "Leitura da configuração do robô",
+    "id": "1763317065768-879610"
+  },
+  {
+    "type": "ACCESS",
+    "route": "/admin/config",
+    "method": "GET",
+    "userEmail": "admin@rtlaser.com",
+    "timestamp": "2025-11-16T18:17:45.779Z",
+    "details": "Leitura da configuração do robô",
+    "id": "1763317065779-507788"
+  },
+  {
+    "type": "ACCESS",
+    "route": "/admin/metrics/webhook",
+    "method": "GET",
+    "userEmail": "admin@rtlaser.com",
+    "timestamp": "2025-11-16T18:44:42.827Z",
+    "details": "Leitura de métricas do webhook ChatGuru",
+    "id": "1763318682827-682222"
+  },
+  {
+    "type": "ACCESS",
+    "route": "/admin/metrics/webhook",
+    "method": "GET",
+    "userEmail": "admin@rtlaser.com",
+    "timestamp": "2025-11-16T18:44:42.833Z",
+    "details": "Leitura de métricas do webhook ChatGuru",
+    "id": "1763318682833-850697"
+  },
+  {
+    "type": "ACCESS",
+    "route": "/admin/emergency/emails",
+    "method": "GET",
+    "userEmail": "admin@rtlaser.com",
+    "timestamp": "2025-11-16T18:44:44.857Z",
+    "details": "Listagem de e-mails de emergência",
+    "id": "1763318684857-591577"
+  },
+  {
+    "type": "ACCESS",
+    "route": "/admin/emergency/emails",
+    "method": "GET",
+    "userEmail": "admin@rtlaser.com",
+    "timestamp": "2025-11-16T18:44:44.880Z",
+    "details": "Listagem de e-mails de emergência",
+    "id": "1763318684880-64440"
+  },
+  {
+    "type": "ACCESS",
+    "route": "/admin/config",
+    "method": "GET",
+    "userEmail": "admin@rtlaser.com",
+    "timestamp": "2025-11-16T18:52:03.123Z",
+    "details": "Leitura da configuração do robô",
+    "id": "1763319123123-138946"
+  },
+  {
+    "type": "ACCESS",
+    "route": "/admin/config",
+    "method": "GET",
+    "userEmail": "admin@rtlaser.com",
+    "timestamp": "2025-11-16T18:52:03.135Z",
+    "details": "Leitura da configuração do robô",
+    "id": "1763319123135-497167"
+  },
+  {
+    "type": "ACCESS",
+    "route": "/admin/intents",
+    "method": "GET",
+    "userEmail": "admin@rtlaser.com",
+    "timestamp": "2025-11-16T18:54:34.654Z",
+    "details": "Listagem de intents",
+    "id": "1763319274654-723551"
+  },
+  {
+    "type": "ACCESS",
+    "route": "/admin/intents",
+    "method": "GET",
+    "userEmail": "admin@rtlaser.com",
+    "timestamp": "2025-11-16T18:54:34.670Z",
+    "details": "Listagem de intents",
+    "id": "1763319274670-839181"
+  },
+  {
+    "type": "ACCESS",
+    "route": "/admin/metrics/webhook",
+    "method": "GET",
+    "userEmail": "admin@rtlaser.com",
+    "timestamp": "2025-11-16T18:54:38.732Z",
+    "details": "Leitura de métricas do webhook ChatGuru",
+    "id": "1763319278732-600458"
+  },
+  {
+    "type": "ACCESS",
+    "route": "/admin/metrics/webhook",
+    "method": "GET",
+    "userEmail": "admin@rtlaser.com",
+    "timestamp": "2025-11-16T18:54:38.764Z",
+    "details": "Leitura de métricas do webhook ChatGuru",
+    "id": "1763319278764-312296"
+  },
+  {
+    "type": "ACCESS",
+    "route": "/admin/emergency/emails",
+    "method": "GET",
+    "userEmail": "admin@rtlaser.com",
+    "timestamp": "2025-11-16T18:54:40.958Z",
+    "details": "Listagem de e-mails de emergência",
+    "id": "1763319280958-174614"
+  },
+  {
+    "type": "ACCESS",
+    "route": "/admin/emergency/emails",
+    "method": "GET",
+    "userEmail": "admin@rtlaser.com",
+    "timestamp": "2025-11-16T18:54:40.967Z",
+    "details": "Listagem de e-mails de emergência",
+    "id": "1763319280967-152544"
+  }
+]

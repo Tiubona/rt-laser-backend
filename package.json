@@ -1,0 +1,44 @@
+{
+  "name": "rt-laser-backend",
+  "version": "1.0.0",
+  "description": "Backend RT Laser - API administrativa e integrações (ChatGuru, métricas, emergência, etc.)",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
+    "start": "tsx src/server.ts",
+    "postinstall": "prisma generate"
+  },
+  "keywords": [],
+  "author": "RT Laser",
+  "license": "MIT",
+  "dependencies": {
+    "@prisma/client": "^6.19.0",
+    "@types/axios": "^0.9.36",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/speakeasy": "^2.0.10",
+    "axios": "^1.13.2",
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "nodemailer": "^6.9.11",
+    "openai": "^6.9.1",
+    "prisma": "^6.19.0",
+    "speakeasy": "^2.0.0",
+    "tsx": "^4.21.0",
+    "uuid": "^9.0.1",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.18",
+    "@types/express": "^4.17.21",
+    "@types/helmet": "^0.0.48",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^20.11.0",
+    "@types/nodemailer": "^6.4.15",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.4.0"
+  }
+}

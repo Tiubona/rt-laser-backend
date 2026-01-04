@@ -1,0 +1,109 @@
+// prisma/schema.prisma
+
+// ======================================================
+// Configuração básica do Prisma Client
+// ======================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ======================================================
+// ENUMS
+// ======================================================
+
+enum AtendimentoMode {
+  AUTO
+  MISTO
+  HUMANO
+}
+
+// ======================================================
+// USUÁRIO ADMINISTRATIVO (PAINEL)
+// ======================================================
+
+model AdminUser {
+  id                 Int      @id @default(autoincrement())
+  name               String
+  email              String   @unique
+  passwordHash       String
+  isActive           Boolean  @default(true)
+  twoFactorSecret    String?
+  isTwoFactorEnabled Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+// ======================================================
+// CONFIGURAÇÃO DO ROBÔ
+// ======================================================
+
+model RobotConfig {
+  id              Int             @id @default(1)
+  robotEnabled    Boolean         @default(true)
+  atendimentoMode AtendimentoMode @default(AUTO)
+  horarioInicio   String          @default("08:00")
+  horarioFim      String          @default("20:00")
+  timezone        String          @default("America/Sao_Paulo")
+  fallbackToHuman Boolean         @default(false)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+}
+
+// ======================================================
+// EMAILS PARA ALERTA DE EMERGÊNCIA
+// ======================================================
+
+model EmergencyEmail {
+  id        Int      @id @default(autoincrement())
+  name      String
+  email     String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+// ======================================================
+// LOGS ADMINISTRATIVOS
+// ======================================================
+
+model AdminLog {
+  id        Int      @id @default(autoincrement())
+  type      String
+  message   String
+  payload   Json?
+  createdAt DateTime @default(now())
+}
+
+// ======================================================
+// REGISTROS DO WEBHOOK (MÉTRICAS BÁSICAS)
+// ======================================================
+
+model WebhookMessageRecord {
+  id             Int      @id @default(autoincrement())
+  timestamp      DateTime @default(now())
+  intentName     String?
+  handoffToHuman Boolean
+  ignored        Boolean
+}
+
+// ======================================================
+// CENÁRIOS DE URA (CONFIGURADOS PELO PAINEL)
+// ======================================================
+
+model ChatScenario {
+  id             Int      @id @default(autoincrement())
+  name           String
+  uraKey         String   @unique
+  description    String?
+  aiInstructions String
+  defaultNextUra String?
+
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
