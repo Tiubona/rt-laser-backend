@@ -56,12 +56,22 @@ async function sendMessageToChatGuru(
   payload: ChatGuruSendMessagePayload,
   instanceId: string
 ): Promise<ChatGuruSendMessageResponse> {
-  const baseUrl = process.env.CHATGURU_API_URL;
-  const token = process.env.CHATGURU_API_TOKEN;
+  // Aceita os dois nomes (pra nunca mais quebrar por detalhe de env)
+  const baseUrl =
+    process.env.CHATGURU_API_URL?.trim() ||
+    process.env.CHATGURU_API_BASE_URL?.trim() ||
+    "";
+
+  const token = process.env.CHATGURU_API_TOKEN?.trim() || "";
+
+  // Diagnóstico SEM expor segredo
+  console.log("[ENV] CHATGURU_API_URL present?", !!process.env.CHATGURU_API_URL);
+  console.log("[ENV] CHATGURU_API_BASE_URL present?", !!process.env.CHATGURU_API_BASE_URL);
+  console.log("[ENV] CHATGURU_API_TOKEN present?", !!process.env.CHATGURU_API_TOKEN);
 
   if (!baseUrl || !token) {
     console.error(
-      "[CHATGURU] CHATGURU_API_URL ou CHATGURU_API_TOKEN não configurados."
+      "[CHATGURU] CHATGURU_API_URL/CHATGURU_API_BASE_URL ou CHATGURU_API_TOKEN não configurados."
     );
     return {
       success: false,
@@ -69,8 +79,15 @@ async function sendMessageToChatGuru(
     };
   }
 
+  // Monta URL sem duplicar /api/v1
+  const normalizedBase = baseUrl.replace(/\/+$/, ""); // remove / no final
+  const hasApiV1 = normalizedBase.endsWith("/api/v1");
+
+  const url = hasApiV1
+    ? `${normalizedBase}/${instanceId}/send-message`
+    : `${normalizedBase}/api/v1/${instanceId}/send-message`;
+
   try {
-    const url = `${baseUrl}/api/v1/${instanceId}/send-message`;
     const response = await axios.post(
       url,
       {
