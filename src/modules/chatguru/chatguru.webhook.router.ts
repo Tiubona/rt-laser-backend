@@ -464,4 +464,31 @@ router.post(
   }
 );
 
+// ===== ROTA DE TESTE (NÃO ENVIA MENSAGEM REAL) =====
+router.post("/test", async (req: Request, res: Response) => {
+  const body = req.body as ChatGuruWebhookBody;
+
+  const telefone = body.telefone || "5599999999999";
+  const mensagem = (body.msg || "mensagem de teste").trim();
+
+  const uraResult = await runUraHandler({
+    ura: "DEFAULT",
+    mensagem,
+    contato: telefone,
+    nome: body.nome_contato ?? "Teste",
+  });
+
+  return res.json({
+    success: true,
+    mode: "TEST",
+    willSendToChatGuru: false,
+    preview: {
+      phone: telefone,
+      message: uraResult.message,
+    },
+    ura: "DEFAULT",
+    nextUra: uraResult.nextUra,
+  });
+});
+
 export default router;
