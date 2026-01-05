@@ -50,59 +50,44 @@ type ChatGuruSendMessageResponse = {
 };
 
 /**
- * Envia mensagem de texto pelo ChatGuru (API HTTP)
+ * Envia mensagem de texto pelo ChatGuru (API HTTP oficial via querystring)
+ * Baseado no padrão:
+ * POST {api_endpoint}?key={token}&account_id={id}&phone_id={phone_id}&action=message_send&text={text}&chat_number={number}
  */
 async function sendMessageToChatGuru(
-  payload: ChatGuruSendMessagePayload,
-  instanceId: string
+  payload: ChatGuruSendMessagePayload
 ): Promise<ChatGuruSendMessageResponse> {
-  // Aceita os dois nomes (pra nunca mais quebrar por detalhe de env)
-  const baseUrl =
-    process.env.CHATGURU_API_URL?.trim() ||
-    process.env.CHATGURU_API_BASE_URL?.trim() ||
-    "";
+  const apiEndpoint =
+    process.env.CHATGURU_API_BASE_URL?.trim() || "https://api.chatguru.app/api/v1";
+  const token = (process.env.CHATGURU_API_TOKEN || "").trim();
+  const accountId = (process.env.CHATGURU_ACCOUNT_ID || "").trim();
+  const phoneId = (process.env.CHATGURU_PHONE_ID || "").trim();
 
-  const token = process.env.CHATGURU_API_TOKEN?.trim() || "";
-
-  // Diagnóstico SEM expor segredo
-  console.log("[ENV] CHATGURU_API_URL present?", !!process.env.CHATGURU_API_URL);
-  console.log("[ENV] CHATGURU_API_BASE_URL present?", !!process.env.CHATGURU_API_BASE_URL);
-  console.log("[ENV] CHATGURU_API_TOKEN present?", !!process.env.CHATGURU_API_TOKEN);
-
-  if (!baseUrl || !token) {
+  if (!token || !accountId || !phoneId) {
     console.error(
-      "[CHATGURU] CHATGURU_API_URL/CHATGURU_API_BASE_URL ou CHATGURU_API_TOKEN não configurados."
+      "[CHATGURU] Configuração incompleta. Verifique CHATGURU_API_TOKEN, CHATGURU_ACCOUNT_ID, CHATGURU_PHONE_ID."
     );
     return {
       success: false,
-      error: "CHATGURU_API_URL/CHATGURU_API_TOKEN ausentes",
+      error: "CHATGURU config ausente (token/account_id/phone_id)",
     };
   }
 
-  // Monta URL sem duplicar /api/v1
-  const normalizedBase = baseUrl.replace(/\/+$/, ""); // remove / no final
-  const hasApiV1 = normalizedBase.endsWith("/api/v1");
-
-  const url = hasApiV1
-    ? `${normalizedBase}/${instanceId}/send-message`
-    : `${normalizedBase}/api/v1/${instanceId}/send-message`;
+  const chatNumber = String(payload.phone || "").replace(/\D/g, "");
+  const text = String(payload.message || "");
 
   try {
-    const response = await axios.post(
-      url,
-      {
-        number: payload.phone,
-        message: payload.message,
-        forceSend: payload.forceSend ?? true,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        timeout: 10000,
-      }
-    );
+    const url =
+      `${apiEndpoint}` +
+      `?key=${encodeURIComponent(token)}` +
+      `&account_id=${encodeURIComponent(accountId)}` +
+      `&phone_id=${encodeURIComponent(phoneId)}` +
+      `&action=message_send` +
+      `&text=${encodeURIComponent(text)}` +
+      `&chat_number=${encodeURIComponent(chatNumber)}`;
+
+    // API usa querystring; body pode ser vazio
+    const response = await axios.post(url, null, { timeout: 10000 });
 
     return { success: true, data: response.data };
   } catch (error: any) {
@@ -370,13 +355,10 @@ router.post(
       if (afterHoursResult.intercepted && afterHoursResult.replyText && canAutoSend) {
         console.log("[WEBHOOK][AFTER_HOURS] Interceptado pelo robô fora de horário.");
 
-        const sendResult = await sendMessageToChatGuru(
-          {
-            phone: telefone,
-            message: afterHoursResult.replyText,
-            forceSend: true,
-          },
-          instanceId
+        const sendResult = await sendMessageToChatGuru({
+ 	 phone: telefone,
+  	 message: afterHoursResult.replyText,
+ 	 forceSend: true,
         );
 
         return res.json({
