@@ -339,6 +339,27 @@ router.post(
       });
     }
 
+    // ✅ MODO TESTE SEGURO (whitelist): só processa se for o número autorizado
+    const allowedPhone = (process.env.TEST_ALLOWED_PHONE || "").trim();
+
+    if (allowedPhone) {
+      const normalizedIncoming = String(telefone).replace(/\D/g, "");
+      const normalizedAllowed = allowedPhone.replace(/\D/g, "");
+
+      if (normalizedIncoming !== normalizedAllowed) {
+        console.log("[WEBHOOK] Ignorado: número não autorizado para teste.", {
+          telefone: normalizedIncoming,
+        });
+
+        // Responde OK para o ChatGuru não ficar reenviando
+        return res.status(200).json({
+          success: true,
+          ignored: true,
+          reason: "PHONE_NOT_ALLOWED",
+        });
+      }
+    }
+
     const isFromWhatsApp = body?.origem_msg === "whatsapp";
     const canAutoSend = isFromWhatsApp;
 
