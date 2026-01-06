@@ -40,7 +40,7 @@ interface ChatGuruWebhookBody {
 type ChatGuruSendMessagePayload = {
   phone: string;
   message: string;
-  forceSend?: boolean;
+  forceSend?: boolean; // mantido para compat, mas a API por querystring não usa esse campo
 };
 
 type ChatGuruSendMessageResponse = {
@@ -50,15 +50,17 @@ type ChatGuruSendMessageResponse = {
 };
 
 /**
- * Envia mensagem de texto pelo ChatGuru (API HTTP oficial via querystring)
- * Baseado no padrão:
+ * Envia mensagem de texto pelo ChatGuru (API via querystring)
+ * Padrão (exemplo):
  * POST {api_endpoint}?key={token}&account_id={id}&phone_id={phone_id}&action=message_send&text={text}&chat_number={number}
  */
 async function sendMessageToChatGuru(
   payload: ChatGuruSendMessagePayload
 ): Promise<ChatGuruSendMessageResponse> {
+  // Base padrão (se não vier no env)
   const apiEndpoint =
     process.env.CHATGURU_API_BASE_URL?.trim() || "https://api.chatguru.app/api/v1";
+
   const token = (process.env.CHATGURU_API_TOKEN || "").trim();
   const accountId = (process.env.CHATGURU_ACCOUNT_ID || "").trim();
   const phoneId = (process.env.CHATGURU_PHONE_ID || "").trim();
@@ -85,6 +87,9 @@ async function sendMessageToChatGuru(
       `&action=message_send` +
       `&text=${encodeURIComponent(text)}` +
       `&chat_number=${encodeURIComponent(chatNumber)}`;
+
+    // ✅ LOG CRUCIAL: mostra exatamente a URL que está sendo chamada (pra matar o 404 Not Found)
+    console.log("[CHATGURU] url final =", url);
 
     // API usa querystring; body pode ser vazio
     const response = await axios.post(url, null, { timeout: 10000 });
@@ -118,8 +123,6 @@ function getURAFromContext(body: ChatGuruWebhookBody): string | null {
 
 /**
  * Heurística simples para saudação.
- * (A sacada aqui é: se for saudação e NÃO tiver URA, nós forçamos URA=SAUDACAO,
- * pra cair no seu cenário treinado no painel, sem duplicar texto no webhook.)
  */
 function isGreeting(text: string): boolean {
   const lower = (text || "").trim().toLowerCase();
@@ -147,8 +150,13 @@ type AfterHoursResult = {
 async function callAfterHoursIfEnabled(
   body: ChatGuruWebhookBody
 ): Promise<AfterHoursResult> {
-  const url = process.env.AFTER_HOURS_WEBHOOK_URL;
+  // Se AFTER_HOURS_ENABLED existir e for "false", desliga
+  const enabledFlag = (process.env.AFTER_HOURS_ENABLED || "").trim().toLowerCase();
+  if (enabledFlag === "false" || enabledFlag === "0" || enabledFlag === "no") {
+    return { intercepted: false };
+  }
 
+  const url = process.env.AFTER_HOURS_WEBHOOK_URL;
   if (!url) return { intercepted: false };
 
   try {
@@ -204,8 +212,7 @@ async function callAfterHoursIfEnabled(
 }
 
 /**
- * Implementação do "URA Handler" (mesma lógica do ura.handler.router.ts),
- * só que chamada diretamente aqui pra evitar HTTP interno e manter 1 pipeline.
+ * Implementação do "URA Handler"
  */
 async function runUraHandler(input: {
   ura: string;
@@ -213,7 +220,7 @@ async function runUraHandler(input: {
   contato?: string;
   nome?: string | null;
 }): Promise<{ message: string; nextUra: string | null; scenarioFound: boolean }> {
-  const { ura, mensagem, contato, nome } = input;
+  const { ura, mensagem, nome } = input;
 
   // 1) Buscar cenário configurado para essa URA
   const scenario = await prisma.chatScenario.findUnique({
@@ -242,7 +249,7 @@ async function runUraHandler(input: {
     .join("\n")
     .trim();
 
-  // 3) Chamar a IA usando o mesmo pipeline do robô principal
+  // 3) Chamar a IA
   const aiResult = await generateAiAssistantResponse({
     text: mensagem,
     contactName: nome ?? null,
@@ -253,7 +260,7 @@ async function runUraHandler(input: {
     aiResult.text ||
     "Tive uma pequena dificuldade aqui agora, mas já vou pedir para alguém da equipe te responder direitinho, tudo bem? 💚";
 
-  // 4) URA de saída opcional configurada no painel
+  // 4) URA de saída opcional
   const nextUra = scenario.defaultNextUra || null;
 
   return {
@@ -265,220 +272,217 @@ async function runUraHandler(input: {
 
 /**
  * WEBHOOK PRINCIPAL DO CHATGURU (CAMINHO A)
- * - Intercepta se o robô fora de horário responder AUTO_REPLY
- * - Caso contrário, passa pro seu robô treinado (URA Handler)
  */
-router.post(
-  "/",
-  async (req: Request, res: Response): Promise<Response | void> => {
-    const body = req.body as ChatGuruWebhookBody;
+router.post("/", async (req: Request, res: Response): Promise<Response | void> => {
+  const body = req.body as ChatGuruWebhookBody;
 
-    // 0) Log inicial
-    try {
-      console.log(
-        "[WEBHOOK] Payload recebido do ChatGuru:",
-        JSON.stringify(
-          {
-            id_instancia: body.id_instancia,
-            telefone: body.telefone,
-            origem_msg: body.origem_msg,
-            msg: body.msg,
-            etiqueta: body.etiqueta,
-            etapa_funil: body.etapa_funil,
-            campanha_nome: body.campanha_nome,
-            context_vars: body.context_vars,
-          },
-          null,
-          2
-        )
-      );
-    } catch {}
+  // 0) Log inicial
+  try {
+    console.log(
+      "[WEBHOOK] Payload recebido do ChatGuru:",
+      JSON.stringify(
+        {
+          id_instancia: body.id_instancia,
+          telefone: body.telefone,
+          origem_msg: body.origem_msg,
+          msg: body.msg,
+          etiqueta: body.etiqueta,
+          etapa_funil: body.etapa_funil,
+          campanha_nome: body.campanha_nome,
+          context_vars: body.context_vars,
+        },
+        null,
+        2
+      )
+    );
+  } catch {}
 
-    // 1) Verificação de token (se configurado)
-    const expectedToken = process.env.CHATGURU_WEBHOOK_TOKEN;
-    const receivedToken =
-      (req.headers["x-chatguru-token"] as string | undefined) ||
-      (req.query.token as string | undefined) ||
-      (body as any)?.token;
+  // 1) Verificação de token (se configurado)
+  const expectedToken = process.env.CHATGURU_WEBHOOK_TOKEN;
+  const receivedToken =
+    (req.headers["x-chatguru-token"] as string | undefined) ||
+    (req.query.token as string | undefined) ||
+    (body as any)?.token;
 
-    if (expectedToken) {
-      if (!receivedToken || receivedToken !== expectedToken) {
-        console.warn("[WEBHOOK] Token inválido ou ausente.");
-        return res.status(401).json({
-          success: false,
-          message: "Token inválido.",
-        });
-      }
-    }
-
-    // 2) Normaliza campos
-    const text = (body.msg || "").trim();
-    const telefone = body.telefone;
-    const instanceId = body.id_instancia;
-
-    if (!telefone || !instanceId) {
-      console.warn("[WEBHOOK] Telefone ou id_instancia ausentes.");
-      return res.status(400).json({
+  if (expectedToken) {
+    if (!receivedToken || receivedToken !== expectedToken) {
+      console.warn("[WEBHOOK] Token inválido ou ausente.");
+      return res.status(401).json({
         success: false,
-        message: "Telefone ou id_instancia ausentes.",
-      });
-    }
-
-    // ✅ MODO TESTE SEGURO (whitelist): só processa se for o número autorizado
-    const allowedPhone = (process.env.TEST_ALLOWED_PHONE || "").trim();
-
-    if (allowedPhone) {
-      const normalizedIncoming = String(telefone).replace(/\D/g, "");
-      const normalizedAllowed = allowedPhone.replace(/\D/g, "");
-
-      if (normalizedIncoming !== normalizedAllowed) {
-        console.log("[WEBHOOK] Ignorado: número não autorizado para teste.", {
-          telefone: normalizedIncoming,
-        });
-
-        // Responde OK para o ChatGuru não ficar reenviando
-        return res.status(200).json({
-          success: true,
-          ignored: true,
-          reason: "PHONE_NOT_ALLOWED",
-        });
-      }
-    }
-
-    const isFromWhatsApp = body?.origem_msg === "whatsapp";
-    const canAutoSend = isFromWhatsApp;
-
-    // 3) CAMINHO A — robô fora de horário decide se intercepta
-    try {
-      const afterHoursResult = await callAfterHoursIfEnabled(body);
-
-      if (afterHoursResult.intercepted && afterHoursResult.replyText && canAutoSend) {
-        console.log("[WEBHOOK][AFTER_HOURS] Interceptado pelo robô fora de horário.");
-
-        const sendResult = await sendMessageToChatGuru({
- 	 phone: telefone,
-  	 message: afterHoursResult.replyText,
- 	 forceSend: true,
-        );
-
-        return res.json({
-          success: true,
-          handledBy: "AFTER_HOURS",
-          canAutoSend: true,
-          handoffToHuman: false,
-          replyPreview: afterHoursResult.replyText,
-          sendResult,
-          afterHoursRaw: afterHoursResult.rawResponse ?? null,
-        });
-      }
-    } catch (err) {
-      console.error("[WEBHOOK][AFTER_HOURS] Erro inesperado:", err);
-      // não mata o fluxo; segue pro robô treinado
-    }
-
-    // 4) CAMINHO A — robô treinado (URA handler)
-    try {
-      const uraFromContext = getURAFromContext(body);
-      const nome = (body.nome_contato || null) as string | null;
-
-      // Se for saudação e não veio URA, forçamos URA=SAUDACAO
-      const uraFinal =
-        uraFromContext && String(uraFromContext).trim()
-          ? String(uraFromContext).trim()
-          : isGreeting(text)
-          ? "SAUDACAO"
-          : "DEFAULT";
-
-      const uraResult = await runUraHandler({
-        ura: uraFinal,
-        mensagem: text || "(sem mensagem)",
-        contato: telefone,
-        nome,
-      });
-
-      // Se não é WhatsApp, não envia automático
-      let handoffToHuman = !canAutoSend;
-
-      let sendResult: any = null;
-      if (canAutoSend) {
-        const r = await sendMessageToChatGuru(
-          {
-            phone: telefone,
-            message: uraResult.message,
-            forceSend: true,
-          },
-          instanceId
-        );
-        sendResult = r;
-        if (!r.success) handoffToHuman = true;
-      }
-
-      // Log opcional
-      try {
-        await prisma.adminLog.create({
-          data: {
-            type: "CHATGURU_WEBHOOK",
-            message: `Atendimento via URA_HANDLER (ura=${uraFinal}, scenarioFound=${uraResult.scenarioFound}).`,
-            payload: JSON.stringify({
-              telefone,
-              instanceId,
-              uraFromContext,
-              uraFinal,
-              nextUra: uraResult.nextUra,
-              text,
-            }),
-          },
-        });
-      } catch (logErr: any) {
-        console.warn("[WARN] Falha ao registrar admin log (não crítico).", logErr?.message || logErr);
-      }
-
-      return res.json({
-        success: true,
-        handledBy: "URA_HANDLER",
-        canAutoSend,
-        handoffToHuman,
-        ura: uraFinal,
-        nextUra: uraResult.nextUra,
-        replyPreview: uraResult.message,
-        sendResult,
-      });
-    } catch (err: any) {
-      console.error("[WEBHOOK] Erro no URA_HANDLER:", err?.message || err);
-
-      try {
-        await prisma.adminLog.create({
-          data: {
-            type: "CHATGURU_WEBHOOK_ERROR",
-            message: "Erro no processamento do webhook (URA_HANDLER).",
-            payload: JSON.stringify({
-              error: err?.message || String(err),
-              body,
-            }),
-          },
-        });
-      } catch {}
-
-      return res.status(500).json({
-        success: false,
-        message: "Erro interno ao processar webhook.",
+        message: "Token inválido.",
       });
     }
   }
-);
+
+  // 2) Normaliza campos
+  const text = (body.msg || "").trim();
+  const telefone = body.telefone;
+  const instanceId = body.id_instancia;
+
+  if (!telefone || !instanceId) {
+    console.warn("[WEBHOOK] Telefone ou id_instancia ausentes.");
+    return res.status(400).json({
+      success: false,
+      message: "Telefone ou id_instancia ausentes.",
+    });
+  }
+
+  // ✅ MODO TESTE SEGURO (whitelist): só processa se for o número autorizado
+  const allowedPhone = (process.env.TEST_ALLOWED_PHONE || "").trim();
+  if (allowedPhone) {
+    const normalizedIncoming = String(telefone).replace(/\D/g, "");
+    const normalizedAllowed = allowedPhone.replace(/\D/g, "");
+
+    if (normalizedIncoming !== normalizedAllowed) {
+      console.log("[WEBHOOK] Ignorado: número não autorizado para teste.", {
+        telefone: normalizedIncoming,
+      });
+
+      // Responde OK para o ChatGuru não ficar reenviando
+      return res.status(200).json({
+        success: true,
+        ignored: true,
+        reason: "PHONE_NOT_ALLOWED",
+      });
+    }
+  }
+
+  const isFromWhatsApp = body?.origem_msg === "whatsapp";
+  const canAutoSend = isFromWhatsApp;
+
+  // 3) CAMINHO A — robô fora de horário decide se intercepta
+  try {
+    const afterHoursResult = await callAfterHoursIfEnabled(body);
+
+    if (afterHoursResult.intercepted && afterHoursResult.replyText && canAutoSend) {
+      console.log("[WEBHOOK][AFTER_HOURS] Interceptado pelo robô fora de horário.");
+
+      // ✅ CORRIGIDO: chamada com 1 parâmetro e sintaxe correta
+      const sendResult = await sendMessageToChatGuru({
+        phone: telefone,
+        message: afterHoursResult.replyText,
+        forceSend: true,
+      });
+
+      return res.json({
+        success: true,
+        handledBy: "AFTER_HOURS",
+        canAutoSend: true,
+        handoffToHuman: false,
+        replyPreview: afterHoursResult.replyText,
+        sendResult,
+        afterHoursRaw: afterHoursResult.rawResponse ?? null,
+      });
+    }
+  } catch (err) {
+    console.error("[WEBHOOK][AFTER_HOURS] Erro inesperado:", err);
+    // não mata o fluxo; segue pro robô treinado
+  }
+
+  // 4) CAMINHO A — robô treinado (URA handler)
+  try {
+    const uraFromContext = getURAFromContext(body);
+    const nome = (body.nome_contato || null) as string | null;
+
+    // Se for saudação e não veio URA, forçamos URA=SAUDACAO
+    const uraFinal =
+      uraFromContext && String(uraFromContext).trim()
+        ? String(uraFromContext).trim()
+        : isGreeting(text)
+        ? "SAUDACAO"
+        : "DEFAULT";
+
+    const uraResult = await runUraHandler({
+      ura: uraFinal,
+      mensagem: text || "(sem mensagem)",
+      contato: telefone,
+      nome,
+    });
+
+    // Se não é WhatsApp, não envia automático
+    let handoffToHuman = !canAutoSend;
+
+    let sendResult: any = null;
+    if (canAutoSend) {
+      // ✅ CORRIGIDO: chamada com 1 parâmetro (sem instanceId)
+      const r = await sendMessageToChatGuru({
+        phone: telefone,
+        message: uraResult.message,
+        forceSend: true,
+      });
+      sendResult = r;
+      if (!r.success) handoffToHuman = true;
+    }
+
+    // Log opcional
+    try {
+      await prisma.adminLog.create({
+        data: {
+          type: "CHATGURU_WEBHOOK",
+          message: `Atendimento via URA_HANDLER (ura=${uraFinal}, scenarioFound=${uraResult.scenarioFound}).`,
+          payload: JSON.stringify({
+            telefone,
+            instanceId,
+            uraFromContext,
+            uraFinal,
+            nextUra: uraResult.nextUra,
+            text,
+          }),
+        },
+      });
+    } catch (logErr: any) {
+      console.warn(
+        "[WARN] Falha ao registrar admin log (não crítico).",
+        logErr?.message || logErr
+      );
+    }
+
+    return res.json({
+      success: true,
+      handledBy: "URA_HANDLER",
+      canAutoSend,
+      handoffToHuman,
+      ura: uraFinal,
+      nextUra: uraResult.nextUra,
+      replyPreview: uraResult.message,
+      sendResult,
+    });
+  } catch (err: any) {
+    console.error("[WEBHOOK] Erro no URA_HANDLER:", err?.message || err);
+
+    try {
+      await prisma.adminLog.create({
+        data: {
+          type: "CHATGURU_WEBHOOK_ERROR",
+          message: "Erro no processamento do webhook (URA_HANDLER).",
+          payload: JSON.stringify({
+            error: err?.message || String(err),
+            body,
+          }),
+        },
+      });
+    } catch {}
+
+    return res.status(500).json({
+      success: false,
+      message: "Erro interno ao processar webhook.",
+    });
+  }
+});
 
 // ===== ROTA DE TESTE (NÃO ENVIA MENSAGEM REAL) =====
+// Vai responder em: POST /webhook/chatguru/test (se seu server montar o router em /webhook/chatguru)
 router.post("/test", async (req: Request, res: Response) => {
-  const body = req.body as ChatGuruWebhookBody;
+  const body = req.body as Partial<ChatGuruWebhookBody>;
 
-  const telefone = body.telefone || "5599999999999";
-  const mensagem = (body.msg || "mensagem de teste").trim();
+  const telefone = (body.telefone || "5599999999999") as string;
+  const mensagem = String(body.msg || "mensagem de teste").trim();
 
   const uraResult = await runUraHandler({
     ura: "DEFAULT",
     mensagem,
     contato: telefone,
-    nome: body.nome_contato ?? "Teste",
+    nome: (body.nome_contato ?? "Teste") as string,
   });
 
   return res.json({
