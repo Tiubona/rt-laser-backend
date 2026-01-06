@@ -314,38 +314,34 @@ router.post("/", async (req: Request, res: Response): Promise<Response | void> =
     }
   }
 
-  // 2) Normaliza campos
-  const text = (body.msg || "").trim();
-  const telefone = body.telefone;
-  const instanceId = body.id_instancia;
+  // 2) Normaliza campos (aceita body OU querystring)
+const q = req.query as Record<string, any>;
 
-  if (!telefone || !instanceId) {
-    console.warn("[WEBHOOK] Telefone ou id_instancia ausentes.");
-    return res.status(400).json({
-      success: false,
-      message: "Telefone ou id_instancia ausentes.",
-    });
-  }
+const text = String(body.msg ?? q.msg ?? q.text ?? q.message ?? "").trim();
+const telefone = String(body.telefone ?? q.telefone ?? q.phone ?? q.chat_number ?? "").trim();
+const instanceId = String(body.id_instancia ?? q.id_instancia ?? q.instanceId ?? q.instance_id ?? "").trim();
 
-  // ✅ MODO TESTE SEGURO (whitelist): só processa se for o número autorizado
-  const allowedPhone = (process.env.TEST_ALLOWED_PHONE || "").trim();
-  if (allowedPhone) {
-    const normalizedIncoming = String(telefone).replace(/\D/g, "");
-    const normalizedAllowed = allowedPhone.replace(/\D/g, "");
+const origemMsg = String(body.origem_msg ?? q.origem_msg ?? q.origem ?? "whatsapp").trim();
+(body as any).origem_msg = origemMsg; // garante consistência pro resto do fluxo
 
-    if (normalizedIncoming !== normalizedAllowed) {
-      console.log("[WEBHOOK] Ignorado: número não autorizado para teste.", {
-        telefone: normalizedIncoming,
-      });
+const nomeContato = String(body.nome_contato ?? q.nome_contato ?? q.nome ?? "").trim();
+if (nomeContato) (body as any).nome_contato = nomeContato;
 
-      // Responde OK para o ChatGuru não ficar reenviando
-      return res.status(200).json({
-        success: true,
-        ignored: true,
-        reason: "PHONE_NOT_ALLOWED",
-      });
-    }
-  }
+if (!telefone || !instanceId) {
+  console.warn("[WEBHOOK] Telefone ou id_instancia ausentes.", {
+    telefone: telefone || null,
+    id_instancia: instanceId || null,
+    query: q,
+    bodyKeys: Object.keys(body || {}),
+  });
+
+  // Importante: responde 200 para o ChatGuru não ficar retentando e lotar
+  return res.status(200).json({
+    success: true,
+    ignored: true,
+    reason: "MISSING_REQUIRED_FIELDS",
+  });
+}
 
   const isFromWhatsApp = body?.origem_msg === "whatsapp";
   const canAutoSend = isFromWhatsApp;
