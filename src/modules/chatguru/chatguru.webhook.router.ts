@@ -315,33 +315,74 @@ router.post("/", async (req: Request, res: Response): Promise<Response | void> =
   }
 
   // 2) Normaliza campos (aceita body OU querystring)
-const q = req.query as Record<string, any>;
+  const q = req.query as Record<string, any>;
 
-const text = String(body.msg ?? q.msg ?? q.text ?? q.message ?? "").trim();
-const telefone = String(body.telefone ?? q.telefone ?? q.phone ?? q.chat_number ?? "").trim();
-const instanceId = String(body.id_instancia ?? q.id_instancia ?? q.instanceId ?? q.instance_id ?? "").trim();
+  // ✅ FIX CRM CHATGURU:
+  // - ChatGuru CRM manda: celular, texto_mensagem, phone_id
+  // - Nosso teste/antigo manda: telefone, msg, id_instancia
+  const text = String(
+    body.msg ??
+      (body as any).texto_mensagem ??
+      q.msg ??
+      q.text ??
+      q.message ??
+      q.texto_mensagem ??
+      ""
+  ).trim();
 
-const origemMsg = String(body.origem_msg ?? q.origem_msg ?? q.origem ?? "whatsapp").trim();
-(body as any).origem_msg = origemMsg; // garante consistência pro resto do fluxo
+  const telefone = String(
+    body.telefone ??
+      (body as any).celular ??
+      q.telefone ??
+      q.phone ??
+      q.celular ??
+      q.chat_number ??
+      ""
+  ).trim();
 
-const nomeContato = String(body.nome_contato ?? q.nome_contato ?? q.nome ?? "").trim();
-if (nomeContato) (body as any).nome_contato = nomeContato;
+  const instanceId = String(
+    body.id_instancia ??
+      (body as any).phone_id ??
+      q.id_instancia ??
+      q.instanceId ??
+      q.instance_id ??
+      q.phone_id ??
+      ""
+  ).trim();
 
-if (!telefone || !instanceId) {
-  console.warn("[WEBHOOK] Telefone ou id_instancia ausentes.", {
-    telefone: telefone || null,
-    id_instancia: instanceId || null,
-    query: q,
-    bodyKeys: Object.keys(body || {}),
-  });
+  const origemMsg = String(
+    body.origem_msg ??
+      (body as any).origem ??
+      q.origem_msg ??
+      q.origem ??
+      "whatsapp"
+  ).trim();
+  (body as any).origem_msg = origemMsg; // garante consistência pro resto do fluxo
 
-  // Importante: responde 200 para o ChatGuru não ficar retentando e lotar
-  return res.status(200).json({
-    success: true,
-    ignored: true,
-    reason: "MISSING_REQUIRED_FIELDS",
-  });
-}
+  const nomeContato = String(
+    body.nome_contato ??
+      (body as any).nome ??
+      q.nome_contato ??
+      q.nome ??
+      ""
+  ).trim();
+  if (nomeContato) (body as any).nome_contato = nomeContato;
+
+  if (!telefone || !instanceId) {
+    console.warn("[WEBHOOK] Telefone ou id_instancia ausentes.", {
+      telefone: telefone || null,
+      id_instancia: instanceId || null,
+      query: q,
+      bodyKeys: Object.keys(body || {}),
+    });
+
+    // Importante: responde 200 para o ChatGuru não ficar retentando e lotar
+    return res.status(200).json({
+      success: true,
+      ignored: true,
+      reason: "MISSING_REQUIRED_FIELDS",
+    });
+  }
 
   const isFromWhatsApp = body?.origem_msg === "whatsapp";
   const canAutoSend = isFromWhatsApp;
