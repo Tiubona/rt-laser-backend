@@ -1,3 +1,5 @@
+// src/modules/chatguru/chatguru.webhook.router.ts
+
 import express, { Request, Response } from "express";
 import axios from "axios";
 import dotenv from "dotenv";
@@ -11,14 +13,13 @@ const prisma = new PrismaClient();
 
 /**
  * Tipos baseados na estrutura do ChatGuru e do nosso backend RT Laser
+ * (o payload do ChatGuru varia bastante, então vários campos são opcionais)
  */
 interface ChatGuruWebhookBody {
-  id_instancia?: string;
-  id_msg?: string | null;
-  id_contato?: string | null;
+  id_instancia?: string | null;
 
-  telefone?: string;
-  celular?: string;
+  telefone?: string | null;
+  celular?: string | null;
 
   nome_contato?: string | null;
   nome?: string | null;
@@ -31,11 +32,9 @@ interface ChatGuruWebhookBody {
   executado_por?: string | null;
 
   link_chat?: string | null;
-  phone_id?: string | null;
 
-  context_vars?: {
-    [key: string]: string | number | boolean | null | undefined;
-  } | null;
+  phone_id?: string | null; // costuma vir no payload
+  context_vars?: Record<string, any> | null;
 
   campanha_nome?: string | null;
   campanha_id?: string | null;
@@ -45,40 +44,27 @@ interface ChatGuruWebhookBody {
   [key: string]: any;
 }
 
-type ChatGuruSendMessagePayload = {
-  instanceId: string;
-  phone: string;
-  phoneId?: string;
-  message: string;
+type AfterHoursResult = {
+  intercepted: boolean;
+  replyText?: string;
+  rawResponse?: any;
 };
 
-type ChatGuruSendMessageResponse = {
-  success: boolean;
-  data?: any;
-  error?: any;
-  tried?: Array<{
-    base: string;
-    method: "POST" | "GET";
-    tokenParam: "key" | "token";
-    action: string;
-    status?: number;
-    detail?: any;
-  }>;
+type SendAttempt = {
+  method: "POST" | "GET";
+  url: string;
+  status?: number;
+  dataPreview?: string;
 };
 
-/**
- * Helpers
- */
 function safeTrim(v: any): string {
   return String(v ?? "").trim();
 }
-
 function onlyDigits(v: any): string {
   return safeTrim(v).replace(/\D/g, "");
 }
-
 function removeTrailingSlash(url: string): string {
-  return url.replace(/\/+$/, "");
+  return safeTrim(url).replace(/\/+$/, "");
 }
 
 function tryExtractInstanceIdFromLink(linkChat?: string | null): string | null {
@@ -86,6 +72,7 @@ function tryExtractInstanceIdFromLink(linkChat?: string | null): string | null {
   if (!link) return null;
   try {
     const u = new URL(link);
+    // ex: host "s19.chatguru.app"
     const host = u.host || "";
     const first = host.split(".")[0];
     if (first && /^[a-z0-9]+$/i.test(first)) return first;
@@ -95,159 +82,22 @@ function tryExtractInstanceIdFromLink(linkChat?: string | null): string | null {
   }
 }
 
-function maskSecret(s: string): string {
-  const v = safeTrim(s);
-  if (!v) return "(vazio)";
-  if (v.length <= 8) return "********";
-  return `${v.slice(0, 3)}********${v.slice(-3)}`;
+function tryExtractInstanceIdFromBaseUrl(baseUrl?: string | null): string | null {
+  const url = safeTrim(baseUrl);
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    const host = u.host || ""; // ex: s19.chatguru.app
+    const first = host.split(".")[0];
+    if (first && /^[a-z0-9]+$/i.test(first)) return first;
+    return null;
+  } catch {
+    return null;
+  }
 }
 
-/**
- * Envia mensagem de texto pelo ChatGuru (API via querystring)
- *
- * ✅ Correção: tenta combinações reais do ChatGuru (base/method/tokenParam/action)
- * para parar o 404 "Not Found" que você está vendo.
- */
-async function sendMessageToChatGuru(
-  payload: ChatGuruSendMessagePayload
-): Promise<ChatGuruSendMessageResponse> {
-  const token =
-    safeTrim(process.env.CHATGURU_API_KEY) || safeTrim(process.env.CHATGURU_API_TOKEN);
-  const accountId = safeTrim(process.env.CHATGURU_ACCOUNT_ID);
-
-  if (!token || !accountId) {
-    return {
-      success: false,
-      error:
-        "CHATGURU config ausente (CHATGURU_API_KEY/CHATGURU_API_TOKEN e/ou CHATGURU_ACCOUNT_ID).",
-    };
-  }
-
-  const instanceId = safeTrim(payload.instanceId);
-  const chatNumber = onlyDigits(payload.phone);
-  const text = safeTrim(payload.message);
-
-  // phone_id: prioridade webhook -> env
-  const phoneId =
-    safeTrim(payload.phoneId) || safeTrim(process.env.CHATGURU_PHONE_ID);
-
-  if (!phoneId) {
-    return {
-      success: false,
-      error: "CHATGURU config ausente (phone_id). Nem no webhook nem no ENV.",
-    };
-  }
-
-  const envBase = safeTrim(process.env.CHATGURU_API_BASE_URL); // ex: https://s19.chatguru.app/api/v1
-  const forcedBase = instanceId ? `https://${instanceId}.chatguru.app/api/v1` : "";
-  const apiBase = removeTrailingSlash(forcedBase || envBase || "https://api.chatguru.app/api/v1");
-
-  // combinações
-  const bases = [
-    apiBase,
-    removeTrailingSlash(apiBase) + "/", // algumas APIs são chatas com slash
-    "https://api.chatguru.app/api/v1",
-    "https://api.chatguru.app/api/v1/",
-  ].map((b) => removeTrailingSlash(b));
-
-  const tokenParams: Array<"key" | "token"> = ["key", "token"];
-  const methods: Array<"POST" | "GET"> = ["POST", "GET"];
-  const actions = ["message_send", "send-message"];
-
-  const tried: ChatGuruSendMessageResponse["tried"] = [];
-
-  // tenta até achar uma que não dê 404
-  for (const base of bases) {
-    for (const method of methods) {
-      for (const tokenParam of tokenParams) {
-        for (const action of actions) {
-          const url =
-            `${removeTrailingSlash(base)}` +
-            `?${tokenParam}=${encodeURIComponent(token)}` +
-            `&account_id=${encodeURIComponent(accountId)}` +
-            `&phone_id=${encodeURIComponent(phoneId)}` +
-            `&action=${encodeURIComponent(action)}` +
-            `&text=${encodeURIComponent(text)}` +
-            `&chat_number=${encodeURIComponent(chatNumber)}`;
-
-          try {
-            // log sem vazar segredo
-            console.log("[CHATGURU] tentativa:", {
-              base,
-              method,
-              tokenParam,
-              action,
-              token: maskSecret(token),
-              accountId,
-              phoneId,
-              chatNumber,
-            });
-
-            const resp = await axios.request({
-              url,
-              method,
-              data: null,
-              timeout: 15000,
-              validateStatus: () => true, // não joga no catch por status
-            });
-
-            tried?.push({ base, method, tokenParam, action, status: resp.status });
-
-            // sucesso "real" geralmente é 200 e payload com algum ok
-            if (resp.status >= 200 && resp.status < 300) {
-              return { success: true, data: resp.data, tried };
-            }
-
-            // se não é 404, já devolve erro (pra parar de “rodar em círculo”)
-            if (resp.status !== 404) {
-              return {
-                success: false,
-                error: resp.data || { status: resp.status },
-                tried,
-              };
-            }
-          } catch (err: any) {
-            const status = err?.response?.status;
-            const detail = err?.response?.data || err?.message || err;
-
-            tried?.push({ base, method, tokenParam, action, status, detail });
-
-            // se não for 404, para aqui
-            if (status && status !== 404) {
-              return { success: false, error: detail, tried };
-            }
-          }
-        }
-      }
-    }
-  }
-
-  return {
-    success: false,
-    error: "Todas as tentativas deram 404 (rota não encontrada na API do ChatGuru).",
-    tried,
-  };
-}
-
-/**
- * Extrai URA do context_vars (se existir)
- */
-function getURAFromContext(body: ChatGuruWebhookBody): string | null {
-  const ctx = body.context_vars || {};
-  const uraKey = Object.entries(ctx).find(
-    ([key]) => key.toLowerCase() === "ura" || key.toLowerCase() === "ura_context"
-  )?.[1];
-
-  if (!uraKey) return null;
-  if (typeof uraKey === "string") return uraKey;
-  return String(uraKey);
-}
-
-/**
- * Heurística simples para saudação.
- */
 function isGreeting(text: string): boolean {
-  const lower = (text || "").trim().toLowerCase();
+  const lower = safeTrim(text).toLowerCase();
   return (
     lower === "oi" ||
     lower === "olá" ||
@@ -261,21 +111,16 @@ function isGreeting(text: string): boolean {
   );
 }
 
-// ===== Integração com robô fora de horário =====
+function isEnvFalse(v: any): boolean {
+  const s = safeTrim(v).toLowerCase();
+  return s === "false" || s === "0" || s === "no" || s === "off";
+}
 
-type AfterHoursResult = {
-  intercepted: boolean;
-  replyText?: string;
-  rawResponse?: any;
-};
-
-async function callAfterHoursIfEnabled(
-  body: ChatGuruWebhookBody
-): Promise<AfterHoursResult> {
-  const enabledFlag = safeTrim(process.env.AFTER_HOURS_ENABLED).toLowerCase();
-  if (enabledFlag === "false" || enabledFlag === "0" || enabledFlag === "no") {
-    return { intercepted: false };
-  }
+/**
+ * ===== Integração com robô fora de horário (serviço dedicado) =====
+ */
+async function callAfterHoursIfEnabled(body: ChatGuruWebhookBody): Promise<AfterHoursResult> {
+  if (isEnvFalse(process.env.AFTER_HOURS_ENABLED)) return { intercepted: false };
 
   const url = safeTrim(process.env.AFTER_HOURS_WEBHOOK_URL);
   if (!url) return { intercepted: false };
@@ -289,37 +134,25 @@ async function callAfterHoursIfEnabled(
     const response = await axios.post(url, body, { timeout: 5000, headers });
     const data = response.data;
 
-    if (
-      data &&
-      data.success &&
-      data.action === "AUTO_REPLY" &&
-      typeof data.message === "string" &&
-      data.message.trim()
-    ) {
+    // CONTRATO novo: action=AUTO_REPLY + message
+    if (data?.success && data.action === "AUTO_REPLY" && typeof data.message === "string" && data.message.trim()) {
       return { intercepted: true, replyText: data.message.trim(), rawResponse: data };
     }
 
-    if (
-      data &&
-      data.success &&
-      typeof data.replyMessage === "string" &&
-      data.replyMessage.trim()
-    ) {
+    // compat antigo: replyMessage
+    if (data?.success && typeof data.replyMessage === "string" && data.replyMessage.trim()) {
       return { intercepted: true, replyText: data.replyMessage.trim(), rawResponse: data };
     }
 
     return { intercepted: false, rawResponse: data };
   } catch (error: any) {
-    console.error(
-      "[WEBHOOK][AFTER_HOURS] Erro ao chamar serviço fora de horário:",
-      error?.message || error
-    );
+    console.error("[WEBHOOK][AFTER_HOURS] erro:", error?.message || error);
     return { intercepted: false };
   }
 }
 
 /**
- * Implementação do "URA Handler"
+ * ===== URA Handler (mesma ideia do ura.handler.router.ts) =====
  */
 async function runUraHandler(input: {
   ura: string;
@@ -329,24 +162,19 @@ async function runUraHandler(input: {
 }): Promise<{ message: string; nextUra: string | null; scenarioFound: boolean }> {
   const { ura, mensagem, nome } = input;
 
-  const scenario = await prisma.chatScenario.findUnique({
-    where: { uraKey: ura },
-  });
+  const scenario = await prisma.chatScenario.findUnique({ where: { uraKey: ura } });
 
   if (!scenario || !scenario.active) {
     return {
       scenarioFound: false,
-      message:
-        "Recebi sua mensagem e vou encaminhar para a equipe responder com calma no horário de atendimento, tudo bem? 💚",
+      message: "Recebi sua mensagem e vou encaminhar para a equipe responder com calma no horário de atendimento, tudo bem? 💚",
       nextUra: null,
     };
   }
 
   const contextSummary = [
     `CENÁRIO URA: ${scenario.uraKey}`,
-    scenario.description
-      ? `Descrição: ${scenario.description}`
-      : "Descrição: (não informada)",
+    scenario.description ? `Descrição: ${scenario.description}` : "Descrição: (não informada)",
     "",
     "INSTRUÇÕES ESPECÍFICAS PARA ESTE CONTEXTO:",
     scenario.aiInstructions,
@@ -364,83 +192,136 @@ async function runUraHandler(input: {
     aiResult.text ||
     "Tive uma pequena dificuldade aqui agora, mas já vou pedir para alguém da equipe te responder direitinho, tudo bem? 💚";
 
-  const nextUra = scenario.defaultNextUra || null;
-
-  return { scenarioFound: true, message: respostaFinal, nextUra };
+  return {
+    scenarioFound: true,
+    message: respostaFinal,
+    nextUra: scenario.defaultNextUra || null,
+  };
 }
 
 /**
- * WEBHOOK PRINCIPAL DO CHATGURU
+ * ===== Envio de mensagem para ChatGuru =====
+ *
+ * IMPORTANTE:
+ * - Força sempre a BASE da instância: https://{instance}.chatguru.app/api/v1
+ * - Tenta POST e, se der 404, tenta GET (porque tem conta que muda isso)
+ */
+async function sendMessageToChatGuru(params: {
+  instanceId: string;
+  accountId: string;
+  apiToken: string; // chave (vai no parâmetro key=)
+  phoneId: string;
+  chatNumber: string;
+  text: string;
+}): Promise<{ success: boolean; data?: any; error?: any; attempts: SendAttempt[] }> {
+  const base = `https://${params.instanceId}.chatguru.app/api/v1`;
+
+  const url =
+    `${removeTrailingSlash(base)}` +
+    `?key=${encodeURIComponent(params.apiToken)}` +
+    `&account_id=${encodeURIComponent(params.accountId)}` +
+    `&phone_id=${encodeURIComponent(params.phoneId)}` +
+    `&action=message_send` +
+    `&text=${encodeURIComponent(params.text)}` +
+    `&chat_number=${encodeURIComponent(params.chatNumber)}`;
+
+  const attempts: SendAttempt[] = [];
+
+  // 1) POST
+  try {
+    const r = await axios.post(url, null, { timeout: 10000 });
+    attempts.push({ method: "POST", url, status: r.status });
+    return { success: true, data: r.data, attempts };
+  } catch (e1: any) {
+    const status = e1?.response?.status;
+    const data = e1?.response?.data;
+    attempts.push({
+      method: "POST",
+      url,
+      status,
+      dataPreview: safeTrim(typeof data === "string" ? data : JSON.stringify(data)).slice(0, 200),
+    });
+
+    const is404 =
+      status === 404 ||
+      (typeof data === "object" && data?.detail === "Not Found") ||
+      safeTrim(data).toLowerCase().includes("not found");
+
+    if (!is404) {
+      return { success: false, error: data || e1?.message || e1, attempts };
+    }
+  }
+
+  // 2) GET (fallback)
+  try {
+    const r = await axios.get(url, { timeout: 10000 });
+    attempts.push({ method: "GET", url, status: r.status });
+    return { success: true, data: r.data, attempts };
+  } catch (e2: any) {
+    const status = e2?.response?.status;
+    const data = e2?.response?.data;
+    attempts.push({
+      method: "GET",
+      url,
+      status,
+      dataPreview: safeTrim(typeof data === "string" ? data : JSON.stringify(data)).slice(0, 200),
+    });
+    return { success: false, error: data || e2?.message || e2, attempts };
+  }
+}
+
+/**
+ * ===== WEBHOOK PRINCIPAL DO CHATGURU =====
  */
 router.post("/", async (req: Request, res: Response): Promise<Response | void> => {
   const body = (req.body || {}) as ChatGuruWebhookBody;
   const q = (req.query || {}) as Record<string, any>;
 
-  // Token do webhook (segurança)
-  const expectedToken = safeTrim(process.env.CHATGURU_WEBHOOK_TOKEN);
+  // Segurança: aceita TOKEN por CHATGURU_WEBHOOK_TOKEN ou CHATGURU_WEBHOOK_SECRET
+  const expectedToken = safeTrim(process.env.CHATGURU_WEBHOOK_TOKEN || process.env.CHATGURU_WEBHOOK_SECRET);
   const receivedToken =
     (req.headers["x-chatguru-token"] as string | undefined) ||
     (q.token as string | undefined) ||
     (body as any)?.token;
 
-  if (expectedToken) {
-    if (!receivedToken || receivedToken !== expectedToken) {
-      console.warn("[WEBHOOK] Token inválido ou ausente.");
-      return res.status(401).json({ success: false, message: "Token inválido." });
-    }
+  if (expectedToken && receivedToken !== expectedToken) {
+    console.warn("[WEBHOOK] token inválido.");
+    return res.status(401).json({ success: false, message: "Token inválido." });
   }
 
-  // Normalização do payload
-  const telefone = safeTrim(
-    body.telefone || body.celular || q.telefone || q.celular || q.phone || q.chat_number
-  );
-
-  const text = safeTrim(
-    body.msg || body.texto_mensagem || body.executado_por || q.msg || q.text || q.message
-  );
-
-  const origemMsg = safeTrim(
-    body.origem_msg || body.origem || q.origem_msg || q.origem || "whatsapp"
-  );
-
-  const nomeContato = safeTrim(
-    body.nome_contato || body.nome || q.nome_contato || q.nome
-  );
-
-  const instanceFromBody = safeTrim(body.id_instancia || q.id_instancia || q.instanceId || q.instance_id);
-  const instanceFromLink = tryExtractInstanceIdFromLink(safeTrim(body.link_chat || q.link_chat));
-  const instanceFallback = safeTrim(process.env.CHATGURU_INSTANCE_ID_DEFAULT || "");
-  const instanceId = instanceFromBody || instanceFromLink || instanceFallback;
+  // Normalização (o ChatGuru manda de jeitos diferentes)
+  const telefone = safeTrim(body.telefone || body.celular || q.telefone || q.celular || q.phone || q.chat_number);
+  const text = safeTrim(body.msg || body.texto_mensagem || body.executado_por || q.msg || q.text || q.message);
+  const origemMsg = safeTrim(body.origem_msg || body.origem || q.origem_msg || q.origem || "whatsapp").toLowerCase();
+  const nomeContato = safeTrim(body.nome_contato || body.nome || q.nome_contato || q.nome);
 
   const phoneIdFromWebhook = safeTrim(body.phone_id || q.phone_id || "");
+  const phoneIdEnv = safeTrim(process.env.CHATGURU_PHONE_ID);
 
-  // aplica consistência pro resto do fluxo
-  body.origem_msg = origemMsg;
-  if (nomeContato) body.nome_contato = nomeContato;
-  if (telefone) body.telefone = telefone;
-  if (text) body.msg = text;
-  if (instanceId) body.id_instancia = instanceId;
-  if (phoneIdFromWebhook) body.phone_id = phoneIdFromWebhook;
+  // instanceId: body -> link_chat -> base_url -> fallback env
+  const instanceFromBody = safeTrim(body.id_instancia || q.id_instancia || q.instanceId || q.instance_id);
+  const instanceFromLink = tryExtractInstanceIdFromLink(body.link_chat || q.link_chat);
+  const instanceFromBaseUrl = tryExtractInstanceIdFromBaseUrl(process.env.CHATGURU_API_BASE_URL);
+  const instanceFallback = safeTrim(process.env.CHATGURU_INSTANCE_ID_DEFAULT);
+  const instanceId = instanceFromBody || instanceFromLink || instanceFromBaseUrl || instanceFallback;
 
-  // log de entrada (enxuto)
-  try {
-    console.log("[WEBHOOK] Entrada normalizada:", {
-      instanceId,
-      telefone,
-      origemMsg,
-      phoneId: phoneIdFromWebhook || "(sem phone_id no webhook)",
-      textPreview: (text || "").slice(0, 40),
-      hasLinkChat: !!safeTrim(body.link_chat),
-      keys: Object.keys(body || {}).slice(0, 30),
-    });
-  } catch {}
+  // log enxuto
+  console.log("[WEBHOOK] Entrada normalizada:", {
+    instanceId,
+    telefone,
+    origemMsg,
+    phoneId: phoneIdFromWebhook || phoneIdEnv || "(sem phone_id)",
+    textPreview: (text || "").slice(0, 40),
+    hasLinkChat: !!safeTrim(body.link_chat),
+    keys: Object.keys(body || {}).slice(0, 30),
+  });
 
   if (!telefone || !instanceId) {
     console.warn("[WEBHOOK] Ignorado: faltou telefone ou instanceId.");
     return res.status(200).json({ success: true, ignored: true, reason: "MISSING_REQUIRED_FIELDS" });
   }
 
-  // whitelist (se tiver)
+  // Modo teste seguro (whitelist)
   const allowedPhone = safeTrim(process.env.TEST_ALLOWED_PHONE);
   if (allowedPhone) {
     if (onlyDigits(telefone) !== onlyDigits(allowedPhone)) {
@@ -448,61 +329,106 @@ router.post("/", async (req: Request, res: Response): Promise<Response | void> =
     }
   }
 
-  const canAutoSend = origemMsg.toLowerCase() === "whatsapp";
+  // Flags (se você estiver usando)
+  if (isEnvFalse(process.env.CHATGURU_API_ENABLED)) {
+    return res.status(200).json({ success: true, ignored: true, reason: "CHATGURU_API_DISABLED" });
+  }
+  if (isEnvFalse(process.env.CHATGURU_AUTO_SEND_ENABLED)) {
+    return res.status(200).json({ success: true, ignored: true, reason: "AUTO_SEND_DISABLED" });
+  }
+
+  const canAutoSend = origemMsg === "whatsapp";
 
   // AFTER HOURS
   try {
-    const afterHoursResult = await callAfterHoursIfEnabled(body);
+    const after = await callAfterHoursIfEnabled(body);
+    if (after.intercepted && after.replyText && canAutoSend) {
+      const accountId = safeTrim(process.env.CHATGURU_ACCOUNT_ID);
+      const apiToken = safeTrim(process.env.CHATGURU_API_TOKEN || process.env.CHATGURU_API_KEY); // aceita os dois
+      const phoneId = phoneIdFromWebhook || phoneIdEnv;
 
-    if (afterHoursResult.intercepted && afterHoursResult.replyText && canAutoSend) {
+      if (!accountId || !apiToken || !phoneId) {
+        console.error("[CHATGURU] ENV incompleto p/ enviar (accountId/apiToken/phoneId).");
+        return res.json({
+          success: true,
+          handledBy: "AFTER_HOURS",
+          canAutoSend,
+          handoffToHuman: true,
+          replyPreview: after.replyText,
+          sendResult: { success: false, error: "ENV_INCOMPLETE" },
+        });
+      }
+
       const sendResult = await sendMessageToChatGuru({
         instanceId,
-        phone: telefone,
-        phoneId: phoneIdFromWebhook,
-        message: afterHoursResult.replyText,
+        accountId,
+        apiToken,
+        phoneId,
+        chatNumber: onlyDigits(telefone),
+        text: after.replyText,
       });
+
+      console.log("[CHATGURU] send(after_hours):", sendResult.success, sendResult.attempts?.slice(-1)?.[0] || null);
 
       return res.json({
         success: true,
         handledBy: "AFTER_HOURS",
-        canAutoSend: true,
+        canAutoSend,
         handoffToHuman: !sendResult.success,
-        replyPreview: afterHoursResult.replyText,
+        replyPreview: after.replyText,
         sendResult,
       });
     }
   } catch (err) {
-    console.error("[WEBHOOK][AFTER_HOURS] Erro inesperado:", err);
+    console.error("[WEBHOOK][AFTER_HOURS] erro inesperado:", err);
   }
 
   // URA HANDLER
   try {
-    const uraFromContext = getURAFromContext(body);
-    const uraFinal =
-      uraFromContext && safeTrim(uraFromContext)
-        ? safeTrim(uraFromContext)
-        : isGreeting(text)
-        ? "SAUDACAO"
-        : "DEFAULT";
+    const uraFromContext = (() => {
+      const ctx = body.context_vars || {};
+      const found = Object.entries(ctx).find(
+        ([k]) => k.toLowerCase() === "ura" || k.toLowerCase() === "ura_context"
+      )?.[1];
+      if (!found) return null;
+      return typeof found === "string" ? found : String(found);
+    })();
+
+    const uraFinal = uraFromContext && safeTrim(uraFromContext) ? safeTrim(uraFromContext) : isGreeting(text) ? "SAUDACAO" : "DEFAULT";
 
     const uraResult = await runUraHandler({
       ura: uraFinal,
       mensagem: text || "(sem mensagem)",
       contato: telefone,
-      nome: body.nome_contato || null,
+      nome: nomeContato || null,
     });
 
     let sendResult: any = null;
     let handoffToHuman = !canAutoSend;
 
     if (canAutoSend) {
-      sendResult = await sendMessageToChatGuru({
-        instanceId,
-        phone: telefone,
-        phoneId: phoneIdFromWebhook,
-        message: uraResult.message,
-      });
-      if (!sendResult.success) handoffToHuman = true;
+      const accountId = safeTrim(process.env.CHATGURU_ACCOUNT_ID);
+      const apiToken = safeTrim(process.env.CHATGURU_API_TOKEN || process.env.CHATGURU_API_KEY); // aceita os dois
+      const phoneId = phoneIdFromWebhook || phoneIdEnv;
+
+      if (!accountId || !apiToken || !phoneId) {
+        console.error("[CHATGURU] ENV incompleto p/ enviar (accountId/apiToken/phoneId).");
+        handoffToHuman = true;
+        sendResult = { success: false, error: "ENV_INCOMPLETE" };
+      } else {
+        sendResult = await sendMessageToChatGuru({
+          instanceId,
+          accountId,
+          apiToken,
+          phoneId,
+          chatNumber: onlyDigits(telefone),
+          text: uraResult.message,
+        });
+
+        console.log("[CHATGURU] send(ura):", sendResult.success, sendResult.attempts?.slice(-1)?.[0] || null);
+
+        if (!sendResult.success) handoffToHuman = true;
+      }
     }
 
     // log opcional
@@ -510,13 +436,12 @@ router.post("/", async (req: Request, res: Response): Promise<Response | void> =
       await prisma.adminLog.create({
         data: {
           type: "CHATGURU_WEBHOOK",
-          message: `Atendimento via URA_HANDLER (ura=${uraFinal}, scenarioFound=${uraResult.scenarioFound}).`,
+          message: `URA_HANDLER (ura=${uraFinal}, scenarioFound=${uraResult.scenarioFound}).`,
           payload: JSON.stringify({
             telefone,
             instanceId,
             uraFinal,
             nextUra: uraResult.nextUra,
-            textPreview: (text || "").slice(0, 120),
             sendOk: !!sendResult?.success,
           }),
         },
@@ -534,11 +459,12 @@ router.post("/", async (req: Request, res: Response): Promise<Response | void> =
       sendResult,
     });
   } catch (err: any) {
-    console.error("[WEBHOOK] Erro no URA_HANDLER:", err?.message || err);
+    console.error("[WEBHOOK] erro ura handler:", err?.message || err);
     return res.status(500).json({ success: false, message: "Erro interno ao processar webhook." });
   }
 });
 
+// ROTA DE TESTE (não envia mensagem real)
 router.post("/test", async (req: Request, res: Response) => {
   const body = (req.body || {}) as Partial<ChatGuruWebhookBody>;
   const telefone = safeTrim(body.telefone || body.celular || "5599999999999");
@@ -548,7 +474,7 @@ router.post("/test", async (req: Request, res: Response) => {
     ura: "DEFAULT",
     mensagem,
     contato: telefone,
-    nome: (body.nome_contato ?? "Teste") as string,
+    nome: safeTrim(body.nome_contato || body.nome || "Teste"),
   });
 
   return res.json({
